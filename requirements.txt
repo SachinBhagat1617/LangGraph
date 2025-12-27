@@ -1,0 +1,11 @@
+langchain
+
+langgraph
+
+langchain-oci
+langchain-google-genai
+google-generativeai
+
+langchain-huggingface
+
+dotenv
