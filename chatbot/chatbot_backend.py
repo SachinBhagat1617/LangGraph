@@ -54,15 +54,15 @@ chatbot = graph.compile(checkpointer=checkpointer)
 # --------------------
 # INVOKE (IMPORTANT)
 # --------------------
-result = chatbot.invoke(
-    {
-        "messages": [HumanMessage(content="What is the capital of India?")]
-    },
-    config={"configurable": {"thread_id": "user1"}}
-)
+# result = chatbot.invoke(
+#     {
+#         "messages": [HumanMessage(content="What is the capital of India?")]
+#     },
+#     config={"configurable": {"thread_id": "user1"}}
+# )
 
-# --------------------
-# OUTPUT
-# --------------------
-for msg in result["messages"]:
-    print(type(msg).__name__, ":", msg.content)
+# # --------------------
+# # OUTPUT
+# # --------------------
+# for msg in result["messages"]:
+#     print(type(msg).__name__, ":", msg.content)
