@@ -1,91 +1,129 @@
-import streamlit as st 
+import streamlit as st
 from chatbot_backend import chatbot
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 import uuid
 
-#------------utilities fn ---------------------#
+# ===================== Utilities ===================== #
+
 def generate_thread_id():
-    return uuid.uuid4()
+    return str(uuid.uuid4())
 
-def reset():
-    thread_id=str(generate_thread_id())
-    st.session_state['chatThreads'].append(thread_id)
-    st.session_state['threadId']=thread_id
-    st.session_state['messageHistory']=[]
-    
-def get_config(threadId: str) -> dict :
-    config={
-        "configurable":
-            {
-                "thread_id":threadId
-            }
-    }
-    return config
+def get_config(thread_id: str):
+    return {"configurable": {"thread_id": thread_id}}
 
-def load_conservation():
-    state=chatbot.get_state(config=get_config(st.session_state['threadId']))
-    # Check if messages key exists in state values, return empty list if not
-    return state.values.get('messages', [])
+def reset_chat():
+    thread_id = generate_thread_id()
+    st.session_state["chatThreads"].append({
+        "threadId": thread_id,
+        "title": "New Chat"
+    })
+    st.session_state["activeThreadId"] = thread_id
+    st.session_state["messageHistory"] = []
 
+def load_conversation(thread_id):
+    state = chatbot.get_state(config=get_config(thread_id))
+    return state.values.get("messages", [])
 
-if 'messageHistory' not in st.session_state:
-    st.session_state['messageHistory']=[]
+def update_thread_title(thread_id, title):
+    for thread in st.session_state["chatThreads"]:
+        if thread["threadId"] == thread_id:
+            thread["title"] = title
+            break
 
 
-#[{'role': 'user', 'content': 'Hi'}, {'role': 'assistant', 'content': 'Hello'}]
+# ===================== Session Init ===================== #
 
-# ----------------- Side-bar -------------------------------- #
-st.sidebar.title("Q&A Chatbot")
-if st.sidebar.button("New Chat"):
-    reset()
-    
+if "chatThreads" not in st.session_state:
+    first_id = generate_thread_id()
+    st.session_state["chatThreads"] = [{
+        "threadId": first_id,
+        "title": "New Chat"
+    }]
+    st.session_state["activeThreadId"] = first_id
 
-# during first chat there will be no threadId
-if 'chatThreads' not in st.session_state:
-    threadId=str(generate_thread_id())
-    st.session_state['chatThreads']=[]
-    st.session_state['chatThreads'].append(threadId)
-    #for current threadId
-    st.session_state['threadId']=threadId
-
-#st.sidebar.button(thread_id) for thread_id in st.session_state['threadId']
-for thread_id in st.session_state["chatThreads"][::-1]:
-    if st.sidebar.button(thread_id):
-        st.session_state['threadId'] = thread_id
-        st.session_state['messageHistory']=[]
-        messages=load_conservation()
-        temp_msg=[]
-        for msg in messages:
-            if isinstance(msg,HumanMessage):
-                role="user"
-            else:
-                role="assistant"
-            temp_msg.append({'role':role,'content':msg.content})
-        st.session_state['messageHistory']=temp_msg
-        
-#Writing the conservation history
-for message in st.session_state['messageHistory']:
-    with st.chat_message(message['role']):
-        st.text(message['content'])
+if "messageHistory" not in st.session_state:
+    st.session_state["messageHistory"] = []
 
 
-# ------------------------ Main-UI --------------------------- #
+# ===================== Sidebar ===================== #
 
-user_input=st.chat_input('Type here')
+st.sidebar.title("💬 Chats")
+
+if st.sidebar.button("➕ New Chat"):
+    reset_chat()
+
+st.sidebar.divider()
+
+for thread in reversed(st.session_state["chatThreads"]):
+    tid = thread["threadId"]
+    title = thread.get("title", "New Chat")
+
+    if st.sidebar.button(title, key=tid):
+        st.session_state["activeThreadId"] = tid
+        st.session_state["messageHistory"] = []
+
+        msgs = load_conversation(tid)
+        history = []
+        for msg in msgs:
+            role = "user" if isinstance(msg, HumanMessage) else "assistant"
+            history.append({"role": role, "content": msg.content})
+
+        st.session_state["messageHistory"] = history
+
+
+# ===================== Chat UI ===================== #
+
+for msg in st.session_state["messageHistory"]:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+
+user_input = st.chat_input("Type here")
 
 if user_input:
-    st.session_state['messageHistory'].append({'role':'user','content':user_input})
-    with st.chat_message('user'):
-        st.text(user_input)
-    
-    #response=chatbot.invoke({'messages': [HumanMessage(content=user_input)]}, config=get_config(st.session_state['threadId']))
+    active_thread = st.session_state["activeThreadId"]
 
-    with st.chat_message('assistant'):
-        ai_message=st.write_stream(
-            message_chunk.content for message_chunk,metadata in chatbot.stream(
-                {'messages':[HumanMessage(content=user_input)]},
-                config=get_config(st.session_state['threadId']),
-                stream_mode='messages'
-            )
+    # ---- User message ----
+    st.session_state["messageHistory"].append({
+        "role": "user",
+        "content": user_input
+    })
+
+    with st.chat_message("user"):
+        st.write(user_input)
+
+    # ---- Assistant streaming ----
+    with st.chat_message("assistant"):
+        def ai_only_stream():
+            for chunk, _ in chatbot.stream(
+                {"messages": [HumanMessage(content=user_input)]},
+                config=get_config(active_thread),
+                stream_mode="messages"
+            ):
+                if isinstance(chunk, AIMessage):
+                    yield chunk.content
+
+        ai_message = st.write_stream(ai_only_stream())
+
+    st.session_state["messageHistory"].append({
+        "role": "assistant",
+        "content": ai_message
+    })
+
+    # ===================== AUTO TITLE (FIRST MESSAGE ONLY) ===================== #
+    if len(st.session_state["messageHistory"]) == 2:
+        title_prompt = (
+            "Generate ONE short 3–5 word title for this chat.\n"
+            "Return ONLY the title.\n\n"
+            f"User message: {user_input}"
         )
-    st.session_state['messageHistory'].append({'role':'assistant','content':ai_message})
+
+        # Separate thread for NO memory pollution
+        title_thread_id = f"title-{uuid.uuid4()}"
+
+        title_response = chatbot.invoke(
+            {"messages": [HumanMessage(content=title_prompt)]},
+            config={"configurable": {"thread_id": title_thread_id}}
+        )
+
+        title = title_response["messages"][-1].content.strip()
+        update_thread_title(active_thread, title)
