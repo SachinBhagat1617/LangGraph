@@ -9,3 +9,5 @@ google-generativeai
 langchain-huggingface
 
 dotenv
+streamlit
+langgraph-checkpoint-sqlite

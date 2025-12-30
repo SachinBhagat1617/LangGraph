@@ -24,6 +24,8 @@ model = ChatOCIGenAI(
 # while True:
 #     if (query.lower()=="exit")
 
+
+#Define State / Schema
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage],add_messages]
 
