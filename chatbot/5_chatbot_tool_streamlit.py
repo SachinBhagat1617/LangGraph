@@ -1,6 +1,6 @@
 import streamlit as st
-from chatbot_backend_db import chatbot, retrieve_allThreads, get_thread_title, save_thread_title,llm_Summarizer
-from langchain_core.messages import HumanMessage, AIMessage
+from chatbot_backend_tools import chatbot, retrieve_allThreads, get_thread_title, save_thread_title,llm_Summarizer
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid
 
 # ===================== Utilities ===================== #
@@ -109,19 +109,54 @@ if user_input:
 
     with st.chat_message("user"):
         st.write(user_input)
+        
 
-    # ---- Assistant streaming ----
     with st.chat_message("assistant"):
+        status_holder = {"box": None}
+
         def ai_only_stream():
-            for chunk, _ in chatbot.stream(
+            for chunk, metadata in chatbot.stream(
                 {"messages": [HumanMessage(content=user_input)]},
                 config=get_config(active_thread),
                 stream_mode="messages"
             ):
+
+                # 1️⃣ Tool execution → show status ONLY
+                if isinstance(chunk, ToolMessage):
+                    tool_name = getattr(chunk, "name", "tool")
+
+                    if status_holder["box"] is None:
+                        status_holder["box"] = st.status(
+                            f"🔧 Using `{tool_name}` …", expanded=True
+                        )
+                    else:
+                        status_holder["box"].update(
+                            label=f"🔧 Using `{tool_name}` …",
+                            state="running",
+                            expanded=True,
+                        )
+
+                    continue  # Skip tool messages in the AI output stream
+
                 if isinstance(chunk, AIMessage):
+
+                    # Skip tool-planning messages
+                    if chunk.tool_calls:
+                        continue
+
+                    #  Stream ONLY final user-facing answer
                     yield chunk.content
 
-        ai_message = st.write_stream(ai_only_stream())
+            # 3️⃣ Mark tools as completed
+            if status_holder["box"]:
+                status_holder["box"].update(
+                    label="✅ Done",
+                    state="complete",
+                    expanded=False
+                )
+
+    ai_message = st.write_stream(ai_only_stream())
+
 
     st.session_state["messageHistory"].append({
         "role": "assistant",
