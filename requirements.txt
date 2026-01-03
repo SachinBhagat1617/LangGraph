@@ -11,3 +11,6 @@ langchain-huggingface
 dotenv
 streamlit
 langgraph-checkpoint-sqlite
+
+#for duckduckgo search
+ddgs
