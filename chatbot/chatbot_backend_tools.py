@@ -27,14 +27,13 @@ llm_Summarizer= ChatOCIGenAI(
 )
 SYSTEM_PROMPT = SystemMessage(
     content="""
-You are an assistant with access to tools.
-
-Rules:
-- Use DuckDuckGoSearchRun for current or factual queries.
-- Use calculator for math operations.
-- Use get_stock_price for stock prices.
-- If a tool is needed, ALWAYS call it.
-"""
+                You are an assistant with access to tools.
+                Rules:
+                - Use DuckDuckGoSearchRun for current or factual queries.
+                - Use calculator for math operations.
+                - Use get_stock_price for stock prices.
+                - If a tool is needed, ALWAYS call it.
+            """
 )
 
 #----------Tools Definition ---------#
