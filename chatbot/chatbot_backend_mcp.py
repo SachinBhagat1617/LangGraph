@@ -26,13 +26,13 @@ def _submit_async(coro):
 
 
 def run_async(coro):
-    return _submit_async(coro).result()
+    return _submit_async(coro).result() # <-- waits here for the async function to complete 
+    # it is used to call async functions from sync code using await
 
 
 def submit_async_task(coro):
     """Schedule a coroutine on the backend event loop."""
     return _submit_async(coro)
-
 
 
 service_endpoint= os.getenv("OCI_SERVICE_ENDPOINT")

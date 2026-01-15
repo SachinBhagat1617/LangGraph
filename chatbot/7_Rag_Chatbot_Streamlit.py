@@ -1,5 +1,5 @@
 import streamlit as st
-from chatbot_backend_mcp import chatbot, retrieve_allThreads, get_thread_title, save_thread_title,llm_Summarizer,submit_async_task,run_async
+from chatbot_mcp_rag import chatbot, retrieve_allThreads, get_thread_title, save_thread_title,llm_Summarizer,submit_async_task,run_async,ingest_pdf
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid,queue
 
@@ -72,6 +72,15 @@ if "chatThreads" not in st.session_state:
 
 if "messageHistory" not in st.session_state:
     st.session_state["messageHistory"] = []
+    
+if "ingested_docs" not in st.session_state:
+    st.session_state["ingested_docs"] = {}
+thread_key=str(st.session_state["activeThreadId"])
+thread_docs=st.session_state["ingested_docs"]
+
+
+    
+
 
 
 # ===================== Sidebar ===================== #
@@ -80,9 +89,33 @@ st.sidebar.title("💬 Chats")
 
 if st.sidebar.button("➕ New Chat"):
     reset_chat()
+    st.rerun()
+
+if thread_docs:
+    latest_doc=list(thread_docs.values())[-1]
+    st.sidebar.success(
+        f"Using `{latest_doc.get('filename')}` "
+        f"({latest_doc.get('chunks')} chunks from {latest_doc.get('documents')} pages)"
+    )
+else:
+    st.sidebar.info("No PDF indexed yet.")
+    
+uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chat", type=["pdf"])
+if uploaded_pdf:
+    if uploaded_pdf.name in thread_docs:
+        st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
+    else:
+        with st.sidebar.status("Indexing PDF...",expanded=True) as status_box:
+            summary=ingest_pdf(
+                uploaded_pdf.getvalue(),
+                thread_id=thread_key,
+                filename=uploaded_pdf.name
+            )
+            thread_docs[uploaded_pdf.name] = summary
+            status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
 
 st.sidebar.divider()
-
+st.sidebar.subheader("Past conversations")
 for thread in reversed(st.session_state["chatThreads"]):
     tid = thread["threadId"]
     title = thread.get("title", "New Chat") # Fallback title if missing to New Chat

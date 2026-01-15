@@ -19,3 +19,6 @@ ddgs
 # for mcp server
 langchain_mcp_adapters
 aiosqlite==0.20.0
+
+pypdf
+faiss-cpu
