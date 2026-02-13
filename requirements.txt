@@ -22,3 +22,5 @@ aiosqlite==0.20.0
 
 pypdf
 faiss-cpu
+
+a2a-sdk==0.3.0

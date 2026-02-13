@@ -17,6 +17,9 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.vectorstores import VectorStoreRetriever
 import tempfile
 
+# Interupt feature
+from langgraph.types import interrupt,Command
+
 # to perform async db operations
 import aiosqlite,threading,asyncio
 
@@ -186,6 +189,19 @@ def get_stock_price(symbol: str) -> dict:
     return response.json()
 
 @tool
+def purchase_stock(symbol: str, quantity: int) -> dict:
+    """
+    Simulate purchasing a given quantity of a stock symbol.
+    This tool requires human approval before execution.
+    """
+    return {
+        "status": "success",
+        "message": f"Purchase order placed for {quantity} shares of {symbol}.",
+        "symbol": symbol,
+        "quantity": quantity,
+    }
+
+@tool
 def rag_tool(query: str, thread_id: str = "")-> dict:
     """Retrieve relevant information from the uploaded PDF for the given thread.
     
@@ -236,7 +252,7 @@ async def load_mcp_tools()->list[BaseTool]:
 async def bind_llm_with_tools():
     mcp_tools= await load_mcp_tools()
     tools.clear()
-    tools.extend([search_tool, calculator, get_stock_price, rag_tool])
+    tools.extend([search_tool, calculator, get_stock_price, rag_tool,purchase_stock])
     tools.extend(mcp_tools)
     return model.bind_tools(tools) if tools else model
 
@@ -246,6 +262,7 @@ model_with_tools:ChatOCIGenAI=run_async(bind_llm_with_tools()) # if you don't aw
 #Define State / Schema
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage],add_messages]
+    approval_decision: Optional[str]
 
 async def chat_node(state: ChatState,config=None):
     """LLM node that may answer or request a tool call."""
@@ -262,7 +279,7 @@ async def chat_node(state: ChatState,config=None):
                 IMPORTANT: A PDF document "{pdf_info.get('filename', 'unknown')}" is currently indexed for this chat.
                 When the user asks about "the document", "the PDF", "summarize", or any question that could relate to the uploaded file,
                 you MUST use the `rag_tool` with thread_id="{thread_id}" to retrieve relevant information.
-            """
+                """
     else:
         pdf_context = "No PDF document is currently indexed for this chat."
     
@@ -344,17 +361,115 @@ checkPointer = run_async(_init_db())
 
 tool_node = ToolNode(tools)  #ToolNode executes the tool calls produced by the LLM and returns the results back into the graph state.
 
+def human_approval_node(state: ChatState):
+    """Node that checks if purchase_stock was called and prompts for human approval."""
+    last_message = state["messages"][-1]
+    
+    # Check if the last message is an AI message with tool calls
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        for tool_call in last_message.tool_calls:
+            if tool_call.get("name") == "purchase_stock":
+                args = tool_call.get("args", {})
+                symbol = args.get("symbol", "UNKNOWN")
+                quantity = args.get("quantity", 0)
+                
+                # Interrupt and wait for human decision
+                decision = interrupt(
+                    f"Do you want to purchase {quantity} shares of {symbol}?"
+                )
+                
+                # Store the decision in state
+                return {"approval_decision": decision if decision else "no"}
+    
+    return {"approval_decision": "yes"}
+
+def conditional_tool_node(state: ChatState):
+    """Execute tools, but modify purchase_stock based on approval decision."""
+    from langchain_core.messages import ToolMessage
+    
+    approval = state.get("approval_decision", "no")
+    last_message = state["messages"][-1]
+    
+    # Check if purchase_stock needs special handling
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        purchase_tool_call = None
+        other_tool_calls = []
+        
+        for tool_call in last_message.tool_calls:
+            if tool_call.get("name") == "purchase_stock":
+                purchase_tool_call = tool_call
+            else:
+                other_tool_calls.append(tool_call)
+        
+        # If purchase_stock was rejected, create a cancellation message
+        if purchase_tool_call and approval.lower() != "yes":
+            args = purchase_tool_call.get("args", {})
+            
+            # Create cancellation message for purchase_stock
+            tool_messages = [
+                ToolMessage(
+                    content=f"Purchase order for {args.get('quantity', 0)} shares of {args.get('symbol', 'UNKNOWN')} was cancelled by the user.",
+                    tool_call_id=purchase_tool_call.get("id"),
+                    name="purchase_stock"
+                )
+            ]
+            
+            # If there are other tool calls, execute them normally
+            if other_tool_calls:
+                # Create a modified state with only the other tool calls
+                modified_message = AIMessage(
+                    content=last_message.content,
+                    tool_calls=other_tool_calls
+                )
+                modified_state = {
+                    "messages": state["messages"][:-1] + [modified_message]
+                }
+                other_results = tool_node.invoke(modified_state)
+                tool_messages.extend(other_results.get("messages", []))
+            
+            return {
+                "messages": tool_messages,
+                "approval_decision": None
+            }
+    
+    # Execute all tools normally (approval was granted or no purchase_stock)
+    result = tool_node.invoke(state)
+    result["approval_decision"] = None  # Clear approval decision after use
+    return result
+
+def should_ask_human(state: ChatState) -> str:
+    """Route to human approval if purchase_stock is about to be called."""
+    last_message = state["messages"][-1]
+    
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        for tool_call in last_message.tool_calls:
+            if tool_call.get("name") == "purchase_stock":
+                return "human_approval"
+        return "tools"
+    
+    return END
+
 def build_graph():
     """Build and compile the chatbot graph"""
     #Define Graph
     graph=StateGraph(ChatState)
     #add_node
     graph.add_node("chat_node",chat_node) 
-    graph.add_node("tools", tool_node) 
+    graph.add_node("human_approval", human_approval_node)
+    graph.add_node("tools", conditional_tool_node) 
 
     #add_edge
     graph.add_edge(START,"chat_node")
-    graph.add_conditional_edges("chat_node",tools_condition)
+    graph.add_conditional_edges(
+        "chat_node",
+        should_ask_human,
+        {
+            "human_approval": "human_approval",
+            "tools": "tools",
+            END: END
+        }
+    )
+    graph.add_edge("human_approval", "tools")
     graph.add_edge("tools","chat_node")
 
     # Flow:
